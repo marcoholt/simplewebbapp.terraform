@@ -1,124 +1,155 @@
-# -------- Data lookups (default VPC + subnet + AMI) --------
-data "aws_vpc" "default" {
-  default = true
+locals {
+  tags = { Project = var.project, Environment = "dev" }
 }
 
-data "aws_subnets" "default_vpc_subnets" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+data "aws_availability_zones" "available" {}
+
+# ------------------------------ VPC -------------------------------------------
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  name = "${var.project}-vpc"
+  cidr = var.vpc_cidr
+
+  azs             = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  public_subnets  = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 8, i)]
+  private_subnets = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 8, i + 10)]
+
+  enable_nat_gateway = true
+  single_nat_gateway = true
+
+  # Required tags so ALB controller can choose subnets
+  public_subnet_tags = {
+    "kubernetes.io/role/elb"                         = "1"
+    "kubernetes.io/cluster/${var.project}-eks"       = "shared"
+  }
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb"                = "1"
+    "kubernetes.io/cluster/${var.project}-eks"       = "shared"
+  }
+
+  tags = local.tags
+}
+
+# ------------------------------ EKS -------------------------------------------
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.0"
+
+  cluster_name    = "${var.project}-eks"
+  cluster_version = "1.29"
+  vpc_id          = module.vpc.vpc_id
+  subnet_ids      = module.vpc.private_subnets
+
+  enable_irsa = true
+
+  eks_managed_node_groups = {
+    default = {
+      min_size     = var.eks_min_size
+      max_size     = var.eks_max_size
+      desired_size = var.eks_min_size
+      instance_types = ["t3.medium"]
+      capacity_type  = "ON_DEMAND"
+    }
+  }
+
+  tags = local.tags
+}
+
+# Providers configured against created EKS
+data "aws_eks_cluster" "this" { name = module.eks.cluster_name }
+data "aws_eks_cluster_auth" "this" { name = module.eks.cluster_name }
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = data.aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.this.token
   }
 }
 
-# Latest Amazon Linux 2 AMI (x86_64)
-data "aws_ami" "amazon_linux2" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
+# ------------------------------ ECR -------------------------------------------
+module "ecr_frontend" {
+  source  = "terraform-aws-modules/ecr/aws"
+  version = "~> 2.0"
+  repository_name = "${var.project}-frontend"
+  image_scanning_configuration = { scan_on_push = true }
+  tags = local.tags
 }
 
-# -------- SSH Key Pair --------
-resource "aws_key_pair" "deployment_key" {
-  key_name   = "deployment-test-key"
-  public_key = var.public_key  # Use variable instead of hardcoded key
+module "ecr_backend" {
+  source  = "terraform-aws-modules/ecr/aws"
+  version = "~> 2.0"
+  repository_name = "${var.project}-backend"
+  image_scanning_configuration = { scan_on_push = true }
+  tags = local.tags
 }
 
-# -------- Security Group (SSH + HTTP + HTTPS) --------
-resource "aws_security_group" "web_sg" {
-  name        = "deployment-test-web-sg-v2"
-  description = "Allow HTTP, HTTPS, and SSH for web application"
-  vpc_id      = data.aws_vpc.default.id
-
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "deployment-test-web-sg-v2"
-  }
+# -------------------------- Route53 + ACM -------------------------------------
+resource "aws_route53_zone" "public" {
+  name = var.domain_name
+  tags = local.tags
 }
 
-# -------- EC2 Instance --------
-resource "aws_instance" "web_server" {
-  ami                         = data.aws_ami.amazon_linux2.id
-  instance_type               = "t2.micro"
-  availability_zone           = "us-east-2a"
-  subnet_id                   = data.aws_subnets.default_vpc_subnets.ids[0]
-  vpc_security_group_ids      = [aws_security_group.web_sg.id]
-  key_name                    = aws_key_pair.deployment_key.key_name
-  associate_public_ip_address = true
+module "acm" {
+  source  = "terraform-aws-modules/acm/aws"
+  version = "~> 5.0"
 
-  # Install Docker and run your application
-  user_data = <<-EOF
-              #!/bin/bash
-              yum update -y
-              yum install -y docker
-              service docker start
-              usermod -a -G docker ec2-user
-              
-              # Install Docker Compose
-              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              chmod +x /usr/local/bin/docker-compose
-              
-              # Install Git
-              yum install -y git
-              
-              echo "Web server is ready for deployment!" > /etc/motd
-              EOF
-
-  tags = {
-    Name = "deployment-test-web-server"
-  }
+  domain_name               = var.domain_name
+  zone_id                   = aws_route53_zone.public.zone_id
+  subject_alternative_names = ["*.${var.domain_name}"]
+  wait_for_validation       = true
+  tags = local.tags
 }
 
-# -------- Outputs --------
-output "instance_id" {
-  value       = aws_instance.web_server.id
-  description = "EC2 instance ID"
+# ------------------------------ RDS -------------------------------------------
+# SG limited to EKS node SG on 5432
+resource "aws_security_group" "rds" {
+  name        = "${var.project}-rds-sg"
+  description = "Allow Postgres from EKS nodes"
+  vpc_id      = module.vpc.vpc_id
+
+  egress  { from_port = 0 to_port = 0 protocol = "-1" cidr_blocks = ["0.0.0.0/0"] }
+
+  tags = local.tags
 }
 
-output "public_ip" {
-  value       = aws_instance.web_server.public_ip
-  description = "Public IP of the instance"
+resource "aws_security_group_rule" "rds_from_nodes" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = module.eks.node_security_group_id
 }
 
-output "public_dns" {
-  value       = aws_instance.web_server.public_dns
-  description = "Public DNS of the instance"
+module "rds" {
+  source  = "terraform-aws-modules/rds/aws"
+  version = "~> 6.5"
+
+  identifier              = "${var.project}-pg"
+  engine                  = "postgres"
+  engine_version          = "15"
+  instance_class          = var.db_instance_class
+  allocated_storage       = 20
+  db_name                 = var.db_name
+  username                = var.db_username
+  manage_master_user_password = true  # stored in Secrets Manager
+
+  create_db_subnet_group  = true
+  subnet_ids              = module.vpc.private_subnets
+  vpc_security_group_ids  = [aws_security_group.rds.id]
+  publicly_accessible     = false
+
+  tags = local.tags
 }
 
-output "ssh_command" {
-  value       = "ssh -i your-key.pem ec2-user@${aws_instance.web_server.public_ip}"
-  description = "SSH command to connect to the instance"
-}
+# ------------------------ Helm add-ons in ./helm/*.tf -------------------------
+# (ALB controller, ExternalDNS, cert-manager, External Secrets, Argo CD)

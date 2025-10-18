@@ -1,19 +1,12 @@
-variable "public_key" {
-  description = "Public SSH key for EC2 access"
-  type        = string
-  default     = ""
-}
+variable "project" { type = string  default = "simplewebapp" }
+variable "region"  { type = string  default = "us-east-2" }
+variable "domain_name" { type = string }                 # e.g., "marcoholt.dev"
+variable "vpc_cidr"    { type = string  default = "10.0.0.0/16" }
+variable "az_count"    { type = number  default = 2 }
 
-variable "aws_access_key" {
-  description = "AWS Access Key"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
+variable "eks_min_size" { type = number default = 2 }
+variable "eks_max_size" { type = number default = 4 }
 
-variable "aws_secret_key" {
-  description = "AWS Secret Key"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
+variable "db_name"     { type = string default = "appdb" }
+variable "db_username" { type = string default = "appuser" }
+variable "db_instance_class" { type = string default = "db.t4g.micro" }
