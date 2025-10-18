@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars should NEVER be committed to version control
+
+# SSH Public Key (get this from ~/.ssh/id_rsa.pub or similar)
+public_key = "ssh-rsa your-public-key-here"
+
+# AWS Credentials (use environment variables instead for security)
+# aws_access_key = "your-access-key"
+# aws_secret_key = "your-secret-key"
