@@ -1,4 +1,4 @@
 region      = "us-east-2"
-domain_name = "YOURDOMAIN.com"
+# domain_name = "YOURDOMAIN.com"  # OPTION A: Not needed - using ALB DNS
 eks_min_size = 2
 eks_max_size = 4

@@ -92,22 +92,22 @@ module "ecr_backend" {
   tags = local.tags
 }
 
-# -------------------------- Route53 + ACM -------------------------------------
-resource "aws_route53_zone" "public" {
-  name = var.domain_name
-  tags = local.tags
-}
+# -------------------------- Route53 + ACM (OPTION A: Commented out - using ALB DNS) -----
+# resource "aws_route53_zone" "public" {
+#   name = var.domain_name
+#   tags = local.tags
+# }
 
-module "acm" {
-  source  = "terraform-aws-modules/acm/aws"
-  version = "~> 5.0"
-
-  domain_name               = var.domain_name
-  zone_id                   = aws_route53_zone.public.zone_id
-  subject_alternative_names = ["*.${var.domain_name}"]
-  wait_for_validation       = true
-  tags = local.tags
-}
+# module "acm" {
+#   source  = "terraform-aws-modules/acm/aws"
+#   version = "~> 5.0"
+# 
+#   domain_name               = var.domain_name
+#   zone_id                   = aws_route53_zone.public.zone_id
+#   subject_alternative_names = ["*.${var.domain_name}"]
+#   wait_for_validation       = true
+#   tags = local.tags
+# }
 
 # ------------------------------ RDS -------------------------------------------
 # SG limited to EKS node SG on 5432

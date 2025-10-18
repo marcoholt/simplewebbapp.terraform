@@ -1,0 +1,37 @@
+# Example Ingress for OPTION A: ALB DNS (HTTP only, no domain)
+# Apply this after deploying your app to Kubernetes
+# 
+# Usage:
+# kubectl apply -f ingress-example.yaml
+# kubectl get ingress -n frontend
+# # Look at ADDRESS column -> your ALB DNS name
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simplewebapp
+  namespace: frontend
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-svc
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-svc
+            port:
+              number: 3001
