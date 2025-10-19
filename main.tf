@@ -57,30 +57,14 @@ module "eks" {
   tags = local.tags
 }
 
-# Providers configured against created EKS
-data "aws_eks_cluster" "this" { name = module.eks.cluster_name }
-data "aws_eks_cluster_auth" "this" { name = module.eks.cluster_name }
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
-  }
-}
+# Providers configured in separate file (kubernetes-providers.tf)
+# to avoid dependency issues during initial creation
 
 # ------------------------------ ECR -------------------------------------------
 module "ecr_frontend" {
   source  = "terraform-aws-modules/ecr/aws"
   version = "~> 2.0"
   repository_name = "${var.project}-frontend"
-  image_scanning_configuration = { scan_on_push = true }
   tags = local.tags
 }
 
@@ -88,7 +72,6 @@ module "ecr_backend" {
   source  = "terraform-aws-modules/ecr/aws"
   version = "~> 2.0"
   repository_name = "${var.project}-backend"
-  image_scanning_configuration = { scan_on_push = true }
   tags = local.tags
 }
 
@@ -116,7 +99,12 @@ resource "aws_security_group" "rds" {
   description = "Allow Postgres from EKS nodes"
   vpc_id      = module.vpc.vpc_id
 
-  egress  { from_port = 0 to_port = 0 protocol = "-1" cidr_blocks = ["0.0.0.0/0"] }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   tags = local.tags
 }
@@ -143,6 +131,9 @@ module "rds" {
   username                = var.db_username
   manage_master_user_password = true  # stored in Secrets Manager
 
+  # Parameter group family for PostgreSQL 15
+  family = "postgres15"
+  
   create_db_subnet_group  = true
   subnet_ids              = module.vpc.private_subnets
   vpc_security_group_ids  = [aws_security_group.rds.id]
