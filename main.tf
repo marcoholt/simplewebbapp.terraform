@@ -65,6 +65,10 @@ module "ecr_frontend" {
   source  = "terraform-aws-modules/ecr/aws"
   version = "~> 2.0"
   repository_name = "${var.project}-frontend"
+  
+  # Disable lifecycle policy to avoid length validation error
+  create_lifecycle_policy = false
+  
   tags = local.tags
 }
 
@@ -72,6 +76,10 @@ module "ecr_backend" {
   source  = "terraform-aws-modules/ecr/aws"
   version = "~> 2.0"
   repository_name = "${var.project}-backend"
+  
+  # Disable lifecycle policy to avoid length validation error
+  create_lifecycle_policy = false
+  
   tags = local.tags
 }
 
@@ -140,6 +148,27 @@ module "rds" {
   publicly_accessible     = false
 
   tags = local.tags
+}
+
+# ------------------------ aws-auth ConfigMap -------------------------
+# Add TerraformUser to aws-auth ConfigMap for kubectl access
+resource "kubernetes_config_map" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapUsers = yamlencode([
+      {
+        userarn  = "arn:aws:iam::963527046628:user/TerraformUser"
+        username = "terraform-user"
+        groups   = ["system:masters"]
+      }
+    ])
+  }
+
+  depends_on = [module.eks]
 }
 
 # ------------------------ Helm add-ons in ./helm/*.tf -------------------------
