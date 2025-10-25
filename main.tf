@@ -3,6 +3,7 @@ locals {
 }
 
 data "aws_availability_zones" "available" {}
+data "aws_caller_identity" "current" {}
 
 # ------------------------------ VPC -------------------------------------------
 module "vpc" {
@@ -43,6 +44,10 @@ module "eks" {
   subnet_ids      = module.vpc.private_subnets
 
   enable_irsa = true
+
+  # Enable public endpoint for Terraform access
+  cluster_endpoint_public_access = true
+  cluster_endpoint_private_access = true
 
   eks_managed_node_groups = {
     default = {
@@ -161,8 +166,8 @@ resource "kubernetes_config_map" "aws_auth" {
   data = {
     mapUsers = yamlencode([
       {
-        userarn  = "arn:aws:iam::963527046628:user/TerraformUser"
-        username = "terraform-user"
+        userarn  = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${var.terraform_user_name}"
+        username = var.terraform_user_name
         groups   = ["system:masters"]
       }
     ])

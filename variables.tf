@@ -48,3 +48,9 @@ variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"
 }
+
+variable "terraform_user_name" {
+  type        = string
+  default     = "TerraformUser"
+  description = "Name of the IAM user that will be added to aws-auth ConfigMap"
+}
